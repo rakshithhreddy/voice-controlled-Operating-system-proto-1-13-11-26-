@@ -1,7 +1,7 @@
 """
-NLP Parser Module.
-Decomposes compound spoken commands into discrete operational steps,
-resolves dependencies and context, and creates structured execution specs.
+Advanced Natural Language Instruction Parser (CAOP Voice OS 2.0).
+Parses compound, multi-sentence spoken instructions, resolves contextual references,
+anaphora ('it', 'there', 'the last one'), and produces dependency-aware task specifications.
 """
 
 import re
@@ -13,7 +13,7 @@ from src.nlp.context import ContextManager
 
 
 class ParsedInstruction:
-    """Represents a single parsed sub-operation."""
+    """Represents an atomic parsed sub-operation."""
 
     def __init__(
         self,
@@ -23,8 +23,10 @@ class ParsedInstruction:
         target_name: Optional[str] = None,
         destination: Optional[str] = None,
         content: Optional[str] = None,
+        topic_prompt: Optional[str] = None,
         extension: Optional[str] = None,
         query: Optional[str] = None,
+        new_name: Optional[str] = None,
         depends_on: Optional[int] = None
     ):
         self.step_id = step_id
@@ -33,8 +35,10 @@ class ParsedInstruction:
         self.target_name = target_name
         self.destination = destination
         self.content = content
+        self.topic_prompt = topic_prompt
         self.extension = extension
         self.query = query
+        self.new_name = new_name
         self.depends_on = depends_on
 
     def to_dict(self) -> Dict[str, Any]:
@@ -45,19 +49,20 @@ class ParsedInstruction:
             "target_name": self.target_name,
             "destination": self.destination,
             "content": self.content,
+            "topic_prompt": self.topic_prompt,
             "extension": self.extension,
             "query": self.query,
+            "new_name": self.new_name,
             "depends_on": self.depends_on
         }
 
     def __repr__(self) -> str:
-        return f"<ParsedInstruction step={self.step_id} intent={self.intent.value} target={self.target_name} dest={self.destination}>"
+        return f"<ParsedInstruction #{self.step_id} {self.intent.value} target={self.target_name} dest={self.destination}>"
 
 
 class InstructionParser:
     """
-    Parses natural English utterances, splits multi-intent sentences,
-    and maps them to sequential instructions with contextual grounding.
+    Parses conversational utterances, multi-sentence paragraphs, and compound instructions.
     """
 
     def __init__(self, context_manager: Optional[ContextManager] = None):
@@ -67,63 +72,98 @@ class InstructionParser:
 
     def split_compound_instruction(self, utterance: str) -> List[str]:
         """
-        Splits a compound sentence into separate actionable clauses.
-        Examples:
-        - "Create folder A, then create folder B inside it, and make file C"
-        - "Create folder A and make folder B"
-        - "Inside it, create a folder called College" (keeps together)
+        Splits multi-sentence and compound instructions into discrete actionable clauses.
+        Supports periods, semicolons, 'then', 'after that', 'and create', etc.
         """
-        cleaned = utterance.strip().rstrip(".")
+        cleaned = utterance.strip()
 
-        # Do not split if the sentence starts with a preposition like "Inside it, create..."
-        if re.match(r"^(inside|in|into|under)\s+(?:it|that|the\s+[\w\s]+),\s+", cleaned, re.I):
-            cleaned = re.sub(r"^(inside|in|into|under\s+(?:it|that|the\s+[\w\s]+)),\s+", r"\1 ", cleaned, flags=re.I)
+        # Remove trailing reporting polite phrases like "and tell me exactly what you created"
+        cleaned = re.sub(r"(?:,\s*)?(?:and\s+)?tell\s+me\s+(?:exactly\s+)?(?:what\s+you\s+(?:have\s+)?created|what\s+you\s+did)\.?$", "", cleaned, flags=re.I).strip()
 
-        # Split on sequencing markers:
-        # ', and then ', ', then ', ' and then ', ' then ', '; ', ', and create ', ', and make '
-        pattern = r"(?:,\s*(?:and\s+)?then\s+|(?:and\s+)?then\s+|;\s*|,\s*and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write))|\s+and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write)))"
+        # 1. Normalize periods followed by capital letters or conversational markers
+        sentences = re.split(r"\.\s+(?=[A-Z0-9\"'a-z])", cleaned)
 
-        raw_parts = re.split(pattern, cleaned, flags=re.I)
         clauses = []
-        for p in raw_parts:
-            p_strip = p.strip().strip(",")
-            if not p_strip:
+        for sent in sentences:
+            s_clean = sent.strip().rstrip(".")
+            if not s_clean:
                 continue
 
-            # Check if there is an internal comma separating distinct action verbs
-            sub_parts = re.split(r",\s+(?=(?:create|make|generate|build|delete|remove|read|write|append|open)\b)", p_strip, flags=re.I)
-            
-            # Recombine any dangling preposition phrases (e.g. "Inside it") with following clause
-            buffer = ""
-            for sp in sub_parts:
-                sp_clean = sp.strip().strip(",")
-                if not sp_clean:
+            # Handle discourse markers at start of sentence: "Actually, move it back" -> "move it back"
+            s_clean = re.sub(r"^(?:actually|wait|hold\s+on|no|please|hey\s+assistant),?\s+", "", s_clean, flags=re.I).strip()
+
+            # Do not split if the sentence starts with a preposition phrase like "Inside it, create..."
+            if re.match(r"^(inside|in|into|under)\s+(?:it|that|the\s+[\w\s]+),\s+", s_clean, re.I):
+                s_clean = re.sub(r"^(inside|in|into|under\s+(?:it|that|the\s+[\w\s]+)),\s+", r"\1 ", s_clean, flags=re.I)
+
+            # Split on markers: ', then ', '; ', 'after that, ', 'and create...'
+            pattern = r"(?:,\s*(?:and\s+)?then\s+|(?:and\s+)?then\s+|;\s*|,\s*after\s+that,?\s*|after\s+that,?\s*|,\s*and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move))|\s+and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move)))"
+
+            raw_parts = re.split(pattern, s_clean, flags=re.I)
+            for p in raw_parts:
+                p_strip = p.strip().strip(",")
+                if not p_strip:
                     continue
-                if re.match(r"^(inside|in|into|under)\s+(it|that|there|\w+)", sp_clean, re.I) and not any(v in sp_clean.lower() for v in ["create", "make", "delete", "read", "write", "open"]):
-                    buffer = sp_clean + " "
-                else:
-                    clauses.append((buffer + sp_clean).strip())
-                    buffer = ""
-            if buffer:
-                if clauses:
-                    clauses[-1] = (clauses[-1] + " " + buffer).strip()
-                else:
-                    clauses.append(buffer.strip())
+
+                # Strip discourse prefixes inside clauses too
+                p_strip = re.sub(r"^(?:actually|wait|no|please),?\s+", "", p_strip, flags=re.I).strip()
+
+                # Check if there is an internal comma separating distinct action verbs
+                sub_parts = re.split(r",\s+(?=(?:create|make|generate|build|delete|remove|read|write|append|open|move|organize)\b)", p_strip, flags=re.I)
+
+                buffer = ""
+                for sp in sub_parts:
+                    sp_clean = sp.strip().strip(",")
+                    if not sp_clean:
+                        continue
+                    if re.match(r"^(inside|in|into|under)\s+(it|that|there|\w+)", sp_clean, re.I) and not any(v in sp_clean.lower() for v in ["create", "make", "delete", "read", "write", "open", "move", "organize"]):
+                        buffer = sp_clean + " "
+                    else:
+                        clauses.append((buffer + sp_clean).strip())
+                        buffer = ""
+                if buffer:
+                    if clauses:
+                        clauses[-1] = (clauses[-1] + " " + buffer).strip()
+                    else:
+                        clauses.append(buffer.strip())
 
         return clauses if clauses else [utterance]
 
     def parse(self, utterance: str) -> List[ParsedInstruction]:
         """
-        Processes a full user utterance and returns an ordered list of ParsedInstructions.
-        Maintains an internal context for resolving references within the same instruction
-        as well as from previous turns.
+        Parses utterance into an ordered list of ParsedInstructions.
+        Maintains step-wise context and resolves pronouns and relative locations.
         """
+        # Handle special conversational correction:
+        # "Actually, don't delete those. Move them into a Backup folder instead."
+        if re.search(r"\b(?:don't|do\s+not)\s+(?:delete|remove)\s+(?:those|them)\b", utterance, re.I):
+            dest_match = re.search(r"\binto\s+(?:a\s+)?([A-Za-z0-9_\-]+)\s+(?:folder)?", utterance, re.I)
+            dest_name = dest_match.group(1).strip() if dest_match else "Backup"
+            targets = self.context.get_last_targets()
+            return [
+                ParsedInstruction(
+                    step_id=1,
+                    intent=IntentType.CREATE_FOLDER,
+                    raw_clause=f"Create folder {dest_name}",
+                    target_name=dest_name
+                ),
+                ParsedInstruction(
+                    step_id=2,
+                    intent=IntentType.MOVE_ITEM,
+                    raw_clause=utterance,
+                    target_name="those",
+                    destination=dest_name,
+                    depends_on=1
+                )
+            ]
+
         clauses = self.split_compound_instruction(utterance)
         instructions: List[ParsedInstruction] = []
 
         step_id = 1
         current_focus_folder = self.context.get_last_folder()
         last_step_folder: Optional[str] = None
+        turn_created_folders: List[str] = []
 
         for clause in clauses:
             intent = self.classifier.classify(clause)
@@ -132,28 +172,45 @@ class InstructionParser:
             names = entities["names"]
             destination = entities["destination"]
             content = entities["content"]
+            topic = entities["topic_prompt"]
             extension = entities["extension"]
             query = entities["query"]
+            rename_src = entities["rename_source"]
+            rename_dst = entities["rename_dest"]
 
-            # Handle destination resolution ('inside it', 'in it', 'into it')
+            # Handle destination resolution ('inside it', 'in it', 'there')
             if destination == "it":
-                # First check if the immediately preceding step created a folder
                 if last_step_folder:
                     destination = last_step_folder
                 elif current_focus_folder:
                     destination = current_focus_folder
                 else:
                     destination = self.context.get_last_folder()
-            elif not destination and last_step_folder and intent == IntentType.CREATE_FILE:
-                # If a file is created right after a folder in the same compound sentence,
-                # place it into the created folder by default
-                destination = last_step_folder
 
-            # Handle multi-item folder or file creation in a single clause
-            # e.g., "create three folders inside it called SNA, AI, and Projects"
+            # Handle 'the last one'
+            if names and names[0] == "the last one":
+                ref = self.context.resolve_reference("the last one")
+                if ref:
+                    names = [ref]
+                elif turn_created_folders:
+                    names = [turn_created_folders[-1]]
+
+            # Handle rename pair extraction
+            new_name = rename_dst
+            if rename_src:
+                names = [rename_src]
+
+            # Handle organize target extraction: "organize the College folder properly" -> target="College"
+            if intent == IntentType.ORGANIZE_FILES:
+                org_match = re.search(r"\borganize\s+(?:the\s+)?([A-Za-z0-9_\-]+)\s+(?:folder|directory)?", clause, re.I)
+                if org_match:
+                    cand = org_match.group(1).strip()
+                    if cand.lower() not in ["properly", "cleanly", "files", "workspace"]:
+                        names = [cand]
+
+            # Handle multiple targets in single clause (e.g. "create three folders inside it called AI, SNA and Projects")
             if len(names) > 1 and intent in [IntentType.CREATE_FOLDER, IntentType.CREATE_FILE]:
                 for single_name in names:
-                    # Clean single name
                     clean_name = self._ensure_proper_extension(single_name, intent, extension)
                     dep = (step_id - 1) if destination and (destination == last_step_folder) else None
 
@@ -164,13 +221,16 @@ class InstructionParser:
                         target_name=clean_name,
                         destination=destination,
                         content=content,
+                        topic_prompt=topic,
                         extension=extension,
                         query=query,
+                        new_name=new_name,
                         depends_on=dep
                     )
                     instructions.append(inst)
                     if intent == IntentType.CREATE_FOLDER:
                         last_step_folder = clean_name
+                        turn_created_folders.append(clean_name)
                     step_id += 1
                 continue
 
@@ -178,7 +238,7 @@ class InstructionParser:
             if target_name:
                 target_name = self._ensure_proper_extension(target_name, intent, extension)
 
-            # Check dependency on previous step
+            # Dependency linking
             dep = None
             if destination and destination == last_step_folder:
                 dep = step_id - 1
@@ -190,14 +250,17 @@ class InstructionParser:
                 target_name=target_name,
                 destination=destination,
                 content=content,
+                topic_prompt=topic,
                 extension=extension,
                 query=query,
+                new_name=new_name,
                 depends_on=dep
             )
             instructions.append(inst)
 
             if intent == IntentType.CREATE_FOLDER and target_name:
                 last_step_folder = target_name
+                turn_created_folders.append(target_name)
                 if not current_focus_folder:
                     current_focus_folder = target_name
 
@@ -206,7 +269,6 @@ class InstructionParser:
         return instructions
 
     def _ensure_proper_extension(self, name: str, intent: IntentType, extension: Optional[str]) -> str:
-        """Appends appropriate extension if file creation specifies an extension."""
         if intent == IntentType.CREATE_FILE:
             if "." not in name:
                 if extension:

@@ -1,7 +1,7 @@
 """
-Task Planner Module.
-Converts parsed natural language instructions into an ordered,
-dependency-aware execution plan.
+Intelligent Task Planner Module (CAOP Voice OS 2.0).
+Constructs sequenced, dependency-aware execution plans, resolving hierarchical
+directory paths, contextual references, and multi-clause relationships.
 """
 
 from typing import List, Dict, Any, Optional
@@ -33,8 +33,7 @@ class ExecutionPlan:
 
 class TaskPlanner:
     """
-    Plans and sequences tasks from parsed instructions, resolving
-    hierarchical relative paths and inter-task dependencies.
+    Sequences tasks, maps dependencies, and resolves hierarchical folder paths.
     """
 
     def __init__(self):
@@ -47,13 +46,10 @@ class TaskPlanner:
         current_workspace_cwd: str = "."
     ) -> ExecutionPlan:
         """
-        Creates an ExecutionPlan from a list of ParsedInstructions.
-        Resolves hierarchical paths and establishes topological dependencies.
+        Creates an ExecutionPlan from ParsedInstructions with hierarchical path resolution.
         """
         tasks: List[TaskItem] = []
-        # Mapping from folder name to its fully resolved relative path within this plan
         planned_folder_paths: Dict[str, str] = {}
-        # Mapping from folder name to the task_id that creates it
         folder_creator_tasks: Dict[str, int] = {}
 
         for inst in parsed_instructions:
@@ -65,13 +61,11 @@ class TaskPlanner:
             # Resolve destination hierarchy
             parent_dir = ""
             if dest:
-                # Check if dest is in planned folders (e.g. 'Projects' or 'Semester 7')
                 if dest in planned_folder_paths:
                     parent_dir = planned_folder_paths[dest]
                     if dest in folder_creator_tasks:
                         deps.append(folder_creator_tasks[dest])
                 else:
-                    # Check case-insensitively
                     matched = False
                     for p_name, p_path in planned_folder_paths.items():
                         if p_name.lower() == dest.lower() or p_path.lower().endswith(dest.lower()):
@@ -86,13 +80,19 @@ class TaskPlanner:
                 parent_dir = current_workspace_cwd
 
             # Determine final target path
-            if parent_dir and parent_dir != ".":
-                full_target = f"{parent_dir}/{target}" if target else parent_dir
-            else:
+            if intent in [IntentType.MOVE_ITEM, IntentType.COPY_ITEM]:
                 full_target = target
+            elif parent_dir and parent_dir != "." and target:
+                full_target = f"{parent_dir}/{target}"
+            elif target:
+                if target in planned_folder_paths:
+                    full_target = planned_folder_paths[target]
+                else:
+                    full_target = target
+            else:
+                full_target = parent_dir or "."
 
-            # Format human description
-            desc = self._generate_description(intent, target, parent_dir, inst)
+            desc = self._generate_description(intent, target or full_target, parent_dir, inst)
 
             task = TaskItem(
                 task_id=inst.step_id,
@@ -102,22 +102,23 @@ class TaskPlanner:
                 source_path=None,
                 params={
                     "content": inst.content or "",
+                    "topic_prompt": inst.topic_prompt or "",
                     "extension": inst.extension,
-                    "query": inst.query
+                    "query": inst.query,
+                    "new_name": inst.new_name,
+                    "destination": parent_dir or dest
                 },
                 dependencies=deps
             )
 
             tasks.append(task)
 
-            # If this task creates a folder, record its path for subsequent tasks
+            # Record created folders for downstream relative path resolution
             if intent == IntentType.CREATE_FOLDER and target:
                 planned_folder_paths[target] = full_target
                 folder_creator_tasks[target] = task.task_id
 
-        # Topological sort / dependency ordering
         ordered_tasks = self._order_tasks_by_dependencies(tasks)
-
         return ExecutionPlan(raw_instruction, ordered_tasks)
 
     def _generate_description(
@@ -131,11 +132,16 @@ class TaskPlanner:
         if intent == IntentType.CREATE_FOLDER:
             return f"Create folder '{target}'{loc}"
         elif intent == IntentType.CREATE_FILE:
-            return f"Create file '{target}'{loc}"
+            topic_str = f" with content about '{inst.topic_prompt}'" if inst.topic_prompt else ""
+            return f"Create file '{target}'{loc}{topic_str}"
         elif intent == IntentType.DELETE_FOLDER:
             return f"Delete folder '{target}'"
         elif intent == IntentType.DELETE_FILE:
             return f"Delete file '{target}'"
+        elif intent == IntentType.RENAME_FOLDER or intent == IntentType.RENAME_FILE:
+            return f"Rename '{target}' to '{inst.new_name or 'new name'}'"
+        elif intent == IntentType.MOVE_ITEM:
+            return f"Move '{target}' to '{parent_dir or inst.destination}'"
         elif intent == IntentType.READ_FILE:
             return f"Read content of '{target}'"
         elif intent == IntentType.WRITE_FILE:
@@ -143,7 +149,7 @@ class TaskPlanner:
         elif intent == IntentType.APPEND_FILE:
             return f"Append content to '{target}'"
         elif intent == IntentType.LIST_FOLDER:
-            return f"List contents of folder '{target or 'workspace'}'"
+            return f"List contents of '{target or 'workspace'}'"
         elif intent == IntentType.SEARCH_FILES:
             return f"Search for '{inst.query or target}'"
         elif intent == IntentType.FIND_BY_EXTENSION:
@@ -153,17 +159,14 @@ class TaskPlanner:
         elif intent == IntentType.SUMMARIZE_FILE:
             return f"Summarize document '{target}'"
         elif intent == IntentType.ORGANIZE_FILES:
-            return f"Organize files in workspace"
+            return f"Organize directory '{target or 'workspace'}'"
         elif intent == IntentType.FIND_DUPLICATES:
             return f"Identify duplicate files"
-        elif intent == IntentType.OPEN_ITEM:
-            return f"Open item '{target}'"
-        elif intent == IntentType.NAVIGATE_FOLDER:
-            return f"Navigate to folder '{target}'"
+        elif intent == IntentType.UNDO:
+            return "Undo previous operation"
         return f"Execute {intent.value} on '{target}'"
 
     def _order_tasks_by_dependencies(self, tasks: List[TaskItem]) -> List[TaskItem]:
-        """Ensures tasks run in dependency order."""
         task_map = {t.task_id: t for t in tasks}
         visited = set()
         ordered = []
