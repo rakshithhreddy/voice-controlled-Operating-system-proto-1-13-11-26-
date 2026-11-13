@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] - 2026-11-13
+
+### Fixed
+- **PermissionError on directory-path writes** (`src/workspace/manager.py`):
+  - `create_file()`: Empty path, `"."`, `"workspace_data"`, or existing-directory path now auto-assigns `new_file.txt` / `notes.txt` instead of calling `Path.write_text()` on a directory.
+  - `write_file()`: Empty/root/directory targets return a clean error dict instead of raising `[Errno 13] Permission denied`.
+  - `append_file()`: Same guard pattern — directory targets rejected cleanly.
+- **Executor path guard** (`src/planner/executor.py`):
+  - `CREATE_FILE` branch: `clean_target` validation — empty/root targets replaced with `new_file.txt`; existing directory paths trigger `new_file.txt` fallback inside that dir.
+  - `WRITE_FILE` branch: empty/root targets fall back to `context.get_last_file()`; directory targets check context before returning clean error.
+
+### Tests
+- Added `tests/test_workspace_strict.py` with **27 new test cases** covering:
+  - Nested folder creation & content verification (TC1)
+  - Folder rename (TC2), file move out & back (TC3–4), directory listing (TC5)
+  - Recoverable file deletion + undo recovery (TC6–7)
+  - All PermissionError guard paths: `create_file`, `write_file`, `append_file` (TC8–13)
+  - Path traversal blocking (TC14)
+  - File copy (TC15), full end-to-end scenario (TC16)
+- **Total test suite: 68/68 passed** (was 41/41 before this session)
+
+---
+
 ## [2.0.0] - 2026-11-13
 
 ### Added
