@@ -178,14 +178,24 @@ class TaskExecutor:
                 return self.workspace.create_directory(target)
 
             elif intent == IntentType.CREATE_FILE:
-                p = Path(target)
+                clean_target = (target or "").strip().strip("'\"")
+                if not clean_target or clean_target in [".", "workspace_data", "workspace"]:
+                    clean_target = "new_file.txt"
+
+                p = Path(clean_target)
                 if p.parent != Path("."):
                     resolved_p = self._find_item_in_workspace(str(p.parent), is_dir_only=True)
                     if resolved_p and resolved_p != str(p.parent):
-                        target = str(Path(resolved_p) / p.name)
+                        clean_target = str(Path(resolved_p) / p.name)
+
+                # Check if target is an existing directory
+                resolved_check = self.workspace.resolve_path(clean_target)
+                if resolved_check.exists() and resolved_check.is_dir():
+                    clean_target = str(Path(clean_target) / "new_file.txt")
+
                 content = params.get("content", "")
                 topic = params.get("topic_prompt", "")
-                return self.workspace.create_file(target, initial_content=content, topic_prompt=topic)
+                return self.workspace.create_file(clean_target, initial_content=content, topic_prompt=topic)
 
             elif intent == IntentType.DELETE_FOLDER or intent == IntentType.DELETE_FILE:
                 resolved_target = self._find_item_in_workspace(target) or target
@@ -237,10 +247,24 @@ class TaskExecutor:
                 return self.workspace.read_file(resolved_file)
 
             elif intent == IntentType.WRITE_FILE:
-                actual_target = target
-                if actual_target.lower() in ["it", "that", "the file"]:
-                    actual_target = self.context.get_last_file() or actual_target
+                actual_target = (target or "").strip().strip("'\"")
+                if not actual_target or actual_target in [".", "workspace_data", "workspace"]:
+                    actual_target = self.context.get_last_file() or ""
+                elif actual_target.lower() in ["it", "that", "the file"]:
+                    actual_target = self.context.get_last_file() or ""
+
+                if not actual_target:
+                    return {"success": False, "error": "No target file specified for writing."}
+
                 resolved_file = self._find_item_in_workspace(actual_target) or actual_target
+                resolved_check = self.workspace.resolve_path(resolved_file)
+                if resolved_check.exists() and resolved_check.is_dir():
+                    last_f = self.context.get_last_file()
+                    if last_f and (self.workspace.root / last_f).is_file():
+                        resolved_file = last_f
+                    else:
+                        return {"success": False, "error": f"Cannot write to '{resolved_file}' because it is a directory."}
+
                 content = params.get("content", "")
                 if not content:
                     from src.workspace.content_generator import ContentGenerator

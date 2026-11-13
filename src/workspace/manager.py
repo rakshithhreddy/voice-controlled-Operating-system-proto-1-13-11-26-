@@ -248,7 +248,25 @@ class WorkspaceManager:
     def create_file(self, file_path: str, initial_content: str = "", topic_prompt: Optional[str] = None) -> Dict[str, Any]:
         """Creates a file with optional meaningful synthesized content and undo."""
         try:
-            target = self.resolve_path(file_path)
+            # 1. Clean path and protect against empty or root directory writes
+            clean_path = (file_path or "").strip().strip("'\"")
+            if not clean_path or clean_path in [".", "workspace_data", "workspace"]:
+                clean_path = "notes.txt" if (topic_prompt and "note" in topic_prompt.lower()) else "new_file.txt"
+
+            target = self.resolve_path(clean_path)
+
+            # If resolved path is an existing directory, auto-assign default file inside it!
+            if target.exists() and target.is_dir():
+                default_name = "notes.txt" if (topic_prompt and "note" in topic_prompt.lower()) else "new_file.txt"
+                target = target / default_name
+
+            # Guard against attempting to write to directory path as a file
+            if target.is_dir():
+                return {
+                    "success": False,
+                    "error": f"Cannot write to directory '{target.name}' as a file. Please specify a filename."
+                }
+
             target.parent.mkdir(parents=True, exist_ok=True)
 
             # If meaningful topic prompt is provided and content is empty, synthesize rich content!
@@ -429,7 +447,20 @@ class WorkspaceManager:
     def write_file(self, file_path: str, content: str) -> Dict[str, Any]:
         """Overwrites content to a file with previous content backup for undo."""
         try:
-            target = self.resolve_path(file_path)
+            clean_path = (file_path or "").strip().strip("'\"")
+            if not clean_path or clean_path in [".", "workspace_data", "workspace"]:
+                return {
+                    "success": False,
+                    "error": "Cannot write content: target path points to workspace directory, not a file."
+                }
+
+            target = self.resolve_path(clean_path)
+            if target.exists() and target.is_dir():
+                return {
+                    "success": False,
+                    "error": f"Cannot write to '{target.name}' because it is a directory, not a file."
+                }
+
             prev_content = target.read_text(encoding="utf-8") if target.exists() else None
 
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -452,7 +483,20 @@ class WorkspaceManager:
     def append_file(self, file_path: str, content: str) -> Dict[str, Any]:
         """Appends content to a file."""
         try:
-            target = self.resolve_path(file_path)
+            clean_path = (file_path or "").strip().strip("'\"")
+            if not clean_path or clean_path in [".", "workspace_data", "workspace"]:
+                return {
+                    "success": False,
+                    "error": "Cannot append content: target path points to workspace directory, not a file."
+                }
+
+            target = self.resolve_path(clean_path)
+            if target.exists() and target.is_dir():
+                return {
+                    "success": False,
+                    "error": f"Cannot append to '{target.name}' because it is a directory, not a file."
+                }
+
             prev_content = target.read_text(encoding="utf-8") if target.exists() else ""
 
             target.parent.mkdir(parents=True, exist_ok=True)
