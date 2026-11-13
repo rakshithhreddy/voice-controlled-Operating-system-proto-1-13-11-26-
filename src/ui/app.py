@@ -120,6 +120,9 @@ class VoiceAssistantApp:
         )
         style.map("Control.TButton", background=[("active", theme.BORDER_COLOR)])
 
+        # Panedwindow
+        style.configure("TPanedwindow", background=theme.BG_DARK)
+
         # Treeview (Task Plan)
         style.configure(
             "Treeview",
@@ -194,16 +197,13 @@ class VoiceAssistantApp:
         btn_send.pack(side=tk.LEFT, padx=4)
 
     def _build_main_dashboard(self):
-        # PanedWindow for responsive layout
-        paned = tk.PanedWindow(self.root, orient=tk.VERTICAL, bg=theme.BG_DARK, bd=0, sashwidth=4)
+        # Themed PanedWindow for responsive, proportional layout
+        paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=12, pady=5)
 
-        # Top section: 2 columns (Left: Transcription & Assistant Output | Right: Task Execution Plan)
-        top_pane = ttk.Frame(paned)
-        paned.add(top_pane, weight=3)
-
-        top_paned = tk.PanedWindow(top_pane, orient=tk.HORIZONTAL, bg=theme.BG_DARK, bd=0, sashwidth=4)
-        top_paned.pack(fill=tk.BOTH, expand=True)
+        # Top section: Horizontal PanedWindow (Left: Conversation | Right: Plan)
+        top_paned = ttk.PanedWindow(paned, orient=tk.HORIZONTAL)
+        paned.add(top_paned, weight=3)
 
         # Left Column: Conversation Stream
         conv_frame = ttk.Frame(top_paned, style="Surface.TFrame", padding=10)
