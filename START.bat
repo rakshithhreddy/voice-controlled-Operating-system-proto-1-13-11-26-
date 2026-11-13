@@ -41,7 +41,7 @@ echo [OK] Running Python Environment: %ENV_PATH%
 
 :: 4. Verify Core Dependencies
 echo [*] Verifying required dependencies...
-python -c "import speech_recognition, pyttsx3, pyaudio, tkinter, pytest" >nul 2>nul
+python -c "import speech_recognition, pyttsx3, pyaudio, tkinter, pytest, vosk" >nul 2>nul
 if %errorlevel% neq 0 (
     echo [*] Installing or repairing missing dependencies...
     pip install -r requirements.txt

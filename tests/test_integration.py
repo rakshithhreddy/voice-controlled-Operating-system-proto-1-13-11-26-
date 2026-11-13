@@ -124,3 +124,62 @@ def test_workspace_boundary_enforcement_end_to_end(assistant_system):
     assert result.overall_success is False
     assert len(result.failed) > 0
     assert not (sys["root"].parent / "escaped.txt").exists()
+
+
+def test_caop_advanced_acceptance_scenario_12_turns(assistant_system):
+    """
+    Complete 12-turn CAOP 2.0 advanced acceptance scenario from specification:
+    1. 'Create a folder called College.'
+    2. 'Inside it create a folder called Semester Seven.'
+    3. 'Inside Semester Seven create AI, SNA and Projects.'
+    4. 'Create a text file in SNA explaining social network analysis.'
+    5. 'Create a Python calculator inside Projects.'
+    6. 'Write working code into it and verify that the calculator works.'
+    7. 'Rename Projects to Development.'
+    8. 'Move the calculator into AI.'
+    9. 'Move it back to Development.'
+    10. 'Show me everything inside Semester Seven.'
+    11. 'Delete the SNA notes file.'
+    12. 'Undo that.'
+    """
+    sys = assistant_system
+    parser = sys["parser"]
+    planner = sys["planner"]
+    executor = sys["executor"]
+    root = sys["root"]
+
+    turns = [
+        "Create a folder called College.",
+        "Inside it create a folder called Semester Seven.",
+        "Inside Semester Seven create AI, SNA and Projects.",
+        "Create a text file in SNA explaining social network analysis.",
+        "Create a Python calculator inside Projects.",
+        "Write working code into it and verify that the calculator works.",
+        "Rename Projects to Development.",
+        "Move the calculator into AI.",
+        "Move it back to Development.",
+        "Show me everything inside Semester Seven.",
+        "Delete the SNA notes file.",
+        "Undo that."
+    ]
+
+    for turn in turns:
+        parsed = parser.parse(turn)
+        plan = planner.create_plan(turn, parsed)
+        res = executor.execute_plan(plan)
+        assert res.overall_success is True, f"Failed turn: {turn}"
+
+    # Verify final disk state
+    college = root / "College"
+    assert college.is_dir()
+    sem7 = college / "Semester Seven"
+    assert sem7.is_dir()
+    ai = sem7 / "AI"
+    assert ai.is_dir()
+    dev = sem7 / "Development"
+    assert dev.is_dir()
+    calc = dev / "calculator.py"
+    assert calc.is_file()
+    # SNA notes restored by undo
+    sna_notes = sem7 / "SNA" / "notes.txt"
+    assert sna_notes.is_file()

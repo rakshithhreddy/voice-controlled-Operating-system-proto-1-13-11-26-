@@ -167,3 +167,34 @@ def test_python_script_execution(ws):
     assert res["success"] is True
     assert res["exit_code"] == 0
     assert "Execution successful" in res["stdout"]
+
+
+def test_trash_and_undo_recovery(ws):
+    ws.create_file("important.txt", "Crucial information")
+    assert (ws.root / "important.txt").exists()
+
+    # Safe delete moves to trash
+    del_res = ws.delete_file("important.txt")
+    assert del_res["success"] is True
+    assert not (ws.root / "important.txt").exists()
+
+    # Undo restores file
+    undo_res = ws.undo()
+    assert undo_res["success"] is True
+    assert (ws.root / "important.txt").exists()
+    assert (ws.root / "important.txt").read_text(encoding="utf-8") == "Crucial information"
+
+
+def test_content_generator_synthesis(ws):
+    from src.workspace.content_generator import ContentGenerator
+
+    # Python calculator syntax validation
+    calc_code = ContentGenerator.generate_content("calculator.py", "python calculator")
+    valid, err = ContentGenerator.validate_code_syntax(calc_code, "python")
+    assert valid is True
+    assert err is None
+
+    # SNA Notes generation
+    sna_notes = ContentGenerator.generate_content("notes.txt", "explaining social network analysis")
+    assert "Social Network Analysis" in sna_notes
+    assert "Centrality" in sna_notes or "Degree" in sna_notes or "Graph" in sna_notes

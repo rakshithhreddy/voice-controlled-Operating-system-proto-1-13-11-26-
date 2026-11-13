@@ -53,6 +53,15 @@ if %errorlevel% neq 0 (
     goto :ERROR_EXIT
 )
 
+:: Setup offline speech recognition model
+if not exist "models\vosk-model-small-en-us" (
+    echo [*] Setting up offline Vosk speech recognition model...
+    python -c "import urllib.request, zipfile, io, os; from pathlib import Path; m = Path('models'); m.mkdir(exist_ok=True); req = urllib.request.Request('https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip', headers={'User-Agent': 'Mozilla/5.0'}); data = urllib.request.urlopen(req).read(); zipfile.ZipFile(io.BytesIO(data)).extractall(m); (m / 'vosk-model-small-en-us-0.15').rename(m / 'vosk-model-small-en-us')"
+    echo [OK] Vosk offline speech model ready.
+) else (
+    echo [OK] Vosk offline speech model already present.
+)
+
 echo.
 echo =====================================================================
 echo   Installation Completed Successfully!

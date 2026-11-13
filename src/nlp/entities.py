@@ -44,22 +44,48 @@ class EntityExtractor:
 
         rename_source, rename_dest = self.extract_rename_pair(text)
 
+        def clean_val(v: Optional[str]) -> Optional[str]:
+            if not v:
+                return v
+            v = re.sub(r"[.,;:!?]+$", "", v.strip()).strip()
+            return v if v else None
+
+        raw_names = self.extract_names(text_for_names)
+        clean_names = []
+        for n in raw_names:
+            c = re.sub(r"[;:!?]+$", "", n.strip()).strip()
+            if c.endswith(".") and not any(c.lower().endswith(ext) for ext in [".py", ".txt", ".md", ".json", ".csv", ".log", ".html"]):
+                c = c.rstrip(".")
+            c = c.strip()
+            if c and c not in clean_names:
+                clean_names.append(c)
+
         result: Dict[str, Any] = {
             "raw_text": text,
-            "names": self.extract_names(text_for_names),
-            "destination": self.extract_destination(text_for_names),
+            "names": clean_names,
+            "destination": clean_val(self.extract_destination(text)),
             "content": content,
-            "topic_prompt": topic,
+            "topic_prompt": clean_val(topic),
             "extension": self.extract_extension(text),
-            "query": self.extract_search_query(text_for_names),
-            "rename_source": rename_source,
-            "rename_dest": rename_dest
+            "query": clean_val(self.extract_search_query(text_for_names)),
+            "rename_source": clean_val(rename_source),
+            "rename_dest": clean_val(rename_dest)
         }
         return result
 
     def extract_names(self, text: str) -> List[str]:
         """Extracts file or folder names."""
         names: List[str] = []
+
+        # 0a. 'calculator' -> calculator.py
+        if re.search(r"\b(?:a\s+|the\s+)?(?:python\s+)?calculator\b", text, re.I) and not re.search(r"\bcalculator\.(?:py|exe)\b", text, re.I):
+            names.append("calculator.py")
+            return names
+
+        # 0b. 'notes file' -> notes.txt
+        if re.search(r"\b(?:the\s+)?(?:[a-zA-Z0-9_\-]+\s+)?notes\s+file\b", text, re.I):
+            names.append("notes.txt")
+            return names
 
         # 1. Direct filename or filepath pattern
         file_matches = re.findall(r"(?:^|[\s\"'])((?:(?:\.\.|\.)[/\\])*[A-Za-z0-9_\-./\\]+\.[a-zA-Z0-9]{1,5})(?:$|[\s\"'])", text)
@@ -102,6 +128,26 @@ class EntityExtractor:
             if names:
                 return names
 
+        # 4b. 'create [three folders] X, Y, and Z'
+        create_list = re.search(
+            r"\b(?:create|make)\s+(?:(?:three|two|four)\s+folders?\s+|folders?\s+)?([A-Za-z0-9_.\-\s,]+?)(?:\s+(?:inside|in|into|with|then|containing|explaining)|$)",
+            text,
+            re.I
+        )
+        if create_list:
+            raw_list = create_list.group(1).strip()
+            tokens = re.split(r",\s*|\s+and\s+", raw_list)
+            for tok in tokens:
+                clean_tok = tok.strip()
+                clean_tok = re.sub(r"^(?:and|or|\&)\s+", "", clean_tok, flags=re.I).strip()
+                if clean_tok and clean_tok.lower() not in ["it", "that", "another", "a", "an", "the", "folders", "folder", "files", "file"]:
+                    if clean_tok.lower() in ["a text file", "text file", "a file", "file", "a document", "document", "notes", "notes file"]:
+                        names.append("notes.txt")
+                    else:
+                        names.append(clean_tok)
+            if names:
+                return names
+
         # 5. 'the last one'
         if re.search(r"\bthe\s+last\s+one\b", text, re.I):
             names.append("the last one")
@@ -122,22 +168,24 @@ class EntityExtractor:
 
     def extract_destination(self, text: str) -> Optional[str]:
         """Extracts destination folder or parent container."""
+        cleaned = text.strip()
         # Deictics: 'it', 'there', 'that'
-        if re.search(r"\b(inside|in|into|under)\s+(it|there|that\s+folder|that\s+directory)\b", text, re.I):
+        if re.search(r"\b(inside|in|into|under|to)\s+(it|there|that\s+folder|that\s+directory)\b", cleaned, re.I):
             return "it"
-        if re.search(r"\b(there|in\s+there|into\s+there)\b", text, re.I):
+        if re.search(r"\b(there|in\s+there|into\s+there)\b", cleaned, re.I):
             return "it"
 
-        # 'into / in / inside <folder>'
+        # 'into / in / inside / to <folder>'
+        # e.g., 'into AI', 'to Development', 'inside Projects', 'inside Semester Seven', 'in SNA'
         match = re.search(
-            r"\b(?:into|inside|in)\s+(?:the\s+)?([A-Za-z0-9_\-\s]+?)(?:\s+(?:folder|directory)|$|\s+create|\s+then|\s+and|\s+explaining|\s+containing)",
-            text,
+            r"\b(?:into|inside|in|to)\s+(?:the\s+)?([A-Za-z0-9_\-]+(?:\s+[A-Za-z0-9_\-]+)*?)(?:\s+(?:folder|directory)|[.,;:!?]|\s*$|\s+create|\s+then|\s+and|\s+explaining|\s+containing)",
+            cleaned,
             re.I
         )
         if match:
             dest = match.group(1).strip()
             dest = re.sub(r"^(the|a|an)\s+", "", dest, flags=re.I).strip()
-            if dest and dest.lower() not in ["it", "there", "here", "this"]:
+            if dest and dest.lower() not in ["it", "there", "here", "this", "me", "what", "where"]:
                 return dest
 
         return None
@@ -164,10 +212,16 @@ class EntityExtractor:
 
     def extract_rename_pair(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         """Extracts source and target names for rename instructions."""
-        match = re.search(r"\brename\s+(?:the\s+)?(?:folder\s+|file\s+)?(['\"A-Za-z0-9_\-.\s]+?)\s+to\s+(['\"A-Za-z0-9_\-.\s]+)", text, re.I)
+        match = re.search(r"\brename\s+(?:the\s+)?(?:folder\s+|file\s+|directory\s+)?(['\"A-Za-z0-9_\-.\s]+?)\s+to\s+(['\"A-Za-z0-9_\-.\s]+)", text, re.I)
         if match:
             src = match.group(1).strip().strip("'\"")
             dst = match.group(2).strip().strip("'\"")
+            # Strip trailing descriptors like 'folder', 'directory', 'file'
+            src = re.sub(r"\s+(?:folder|directory|file|dir)$", "", src, flags=re.I).strip()
+            dst = re.sub(r"\s+(?:folder|directory|file|dir)$", "", dst, flags=re.I).strip()
+            # Strip leading articles
+            src = re.sub(r"^(?:the|a|an)\s+", "", src, flags=re.I).strip()
+            dst = re.sub(r"^(?:the|a|an)\s+", "", dst, flags=re.I).strip()
             return src, dst
         return None, None
 

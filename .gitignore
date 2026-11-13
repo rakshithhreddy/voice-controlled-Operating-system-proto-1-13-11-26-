@@ -42,3 +42,6 @@ $RECYCLE.BIN/
 # Audio temp files
 *.wav
 *.tmp
+
+# Speech recognition offline models (downloaded via INSTALL.bat)
+models/

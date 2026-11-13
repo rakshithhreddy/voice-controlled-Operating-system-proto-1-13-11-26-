@@ -1,6 +1,6 @@
-# Quality Assurance & Test Report
+# Quality Assurance & Test Report — CAOP Voice OS 2.0
 
-**Project**: Voice-Controlled Operating System Assistant  
+**Project**: CAOP Voice OS (Intelligent Voice-Controlled Operating System Assistant)  
 **Date of Execution**: November 13, 2026  
 **Platform**: Windows 11 / Python 3.12.2 (venv)  
 **Test Framework**: Pytest 9.2.0  
@@ -9,49 +9,68 @@
 
 ## 📊 Executive Summary
 
-- **Total Test Cases Executed**: 36
-- **Passed**: 36
+- **Total Test Cases Executed**: 41
+- **Passed**: 41
 - **Failed**: 0
 - **Skipped**: 0
 - **Pass Rate**: 100.0%
-- **Execution Time**: ~1.95 seconds
+- **Execution Time**: ~3.09 seconds
 
 ---
 
-## 🛠 Critical Defect Resolution Report
+## 🛠 CAOP 2.0 Key Bug Fixes & Architecture Upgrades
 
-### Defect: Startup Failure (`TclError: unknown option "-weight"`)
-- **Reported Symptom**: Application failed to launch with traceback pointing to `paned.add(top_pane, weight=3)` in `src/ui/app.py`.
-- **Root Cause**: `paned` was instantiated as standard `tk.PanedWindow`, which does not accept a `weight` keyword argument in its `.add()` method (`weight` is exclusive to themed `ttk.PanedWindow`).
-- **Correction Applied**:
-  - Migrated `paned` and `top_paned` to `ttk.PanedWindow(orient=...)`.
-  - Configured `TPanedwindow` style in `theme.py` to match the dark color scheme.
-  - Directly nested the horizontal `top_paned` within the vertical `paned` using supported proportional weights (`weight=3` and `weight=2`).
-- **Verification**: Verified via `test_ui.py` (`test_ui_dashboard_initialization` and `test_ttk_panedwindow_weights`) and live execution of `START.bat`.
+### 1. Rename Target Extraction (`src/nlp/entities.py`)
+- **Root Cause**: `extract_rename_pair` captured descriptor words such as "folder" or "directory" in the source name (e.g., `'Projects folder'` instead of `'Projects'`).
+- **Correction Applied**: Normalized and stripped trailing `\s+(?:folder|directory|file|dir)$` and leading articles (`the`, `a`, `an`) from both source and destination names.
 
-### Defect: Environment Detection (`Virtual environment not found`)
-- **Reported Symptom**: `START.bat` reported missing virtual environment and fell back to system Python.
-- **Correction Applied**:
-  - Created dedicated isolated virtual environment `venv` in project directory.
-  - Installed all required packages directly into `venv`.
-  - Updated `START.bat` to detect, activate, and report the active virtual environment path without batch syntax errors.
+### 2. Context Pronoun Resolution Compatibility (`src/nlp/context.py`)
+- **Correction Applied**: Added backward-compatible `resolve_pronoun(text)` alias forwarding to `resolve_reference(text)`.
 
----
+### 3. Workspace Manager Compatibility (`src/workspace/manager.py`)
+- **Correction Applied**: Added backward-compatible `organize_files(target_folder, criteria)` method forwarding to `organize_directory()`.
 
-## 📋 Detailed Test Case Breakdown
+### 4. Compound Instruction Context Tracking (`src/nlp/parser.py`)
+- **Root Cause**: In compound instructions that create a nested folder and immediately follow with a file creation (e.g. `Create folder A, create folder B inside it, and create file C.py`), the parser previously left `destination=None`, dropping `C.py` into the root.
+- **Correction Applied**: Implemented stateful `last_step_was_nested` tracking. When a step descends into a subfolder, and the subsequent clause coordinates a file creation without an explicit destination, the destination is cleanly inherited. Separate top-level sentences do NOT inherit.
 
-| Category | Test File | Tests Passed | Status | Coverage Areas |
-|---|---|---|---|---|
-| Startup & CLI | `test_startup.py` | 3/3 | PASSED | Config loading, batch script validation, CLI session |
-| Desktop UI & Layout | `test_ui.py` | 2/2 | PASSED | Dashboard widget construction without TclError, `ttk.PanedWindow` proportional weights |
-| Security & Sandboxing | `test_security.py` | 5/5 | PASSED | Boundary confinement, traversal blocking (`../../`), system folder escape blocking, command sanitization |
-| Workspace Operations | `test_workspace.py` | 11/11 | PASSED | Folder CRUD, nested dirs, file CRUD, read/write/append, copy/move, search, grep, duplicates, organize, summarize, Python runner |
-| NLP & Context Engine | `test_nlp.py` | 5/5 | PASSED | Synonym variations, intent classification, entity extraction, compound splitting, anaphoric pronoun resolution |
-| Task Planner & Verification | `test_planner.py` | 3/3 | PASSED | Dependency mapping, physical filesystem verification, partial failure skipping |
-| Voice & Audio Subsystem | `test_voice.py` | 3/3 | PASSED | Microphone detection, recognizer configuration, TTS queue & speech text sanitizer |
-| End-to-End Integration | `test_integration.py` | 4/4 | PASSED | Multi-step folder/file creation, nested project trees, follow-up conversational turns, security rejection integration |
+### 5. Offline English Speech Recognition (Vosk)
+- **Root Cause**: Previous attempt tried downloading `vosk-model-small-en-us-0.22.zip` which does not exist (404).
+- **Correction Applied**: Configured and downloaded `vosk-model-small-en-us-0.15` (41MB) to `models/vosk-model-small-en-us`. Verified offline acoustic model loading and decoding.
+
+### 6. Interactive Process Hanging in Python Runner (`src/workspace/manager.py`)
+- **Root Cause**: Generated `calculator.py` had an interactive `while True: input(...)` loop that caused `subprocess.run` to wait for stdin until timeout.
+- **Correction Applied**: Modified `calculator.py` generation to auto-detect non-interactive piped execution (`not sys.stdin.isatty()`) and run self-tests with exit code 0. Modified `execute_python_script` to run via `sys.executable` with `input=""` and `--test` argument.
 
 ---
 
-## 🏆 Final QA Conclusion
-All 36 tests passed with 100% success rate. The application launches smoothly via `START.bat` and renders all controls without errors.
+## 📋 Detailed Test Case Breakdown (41/41 Passing)
+
+| Test Suite | Tests | Result | Features Verified |
+|---|---|---|---|
+| `tests/test_integration.py` | 5 | **5 PASSED** | Scenario 1 (College Projects & Python), Scenario 2 (Semester 7 nested), Conversational follow-ups, Traversal security containment, **12-Turn Full Acceptance Scenario** |
+| `tests/test_workspace.py` | 13 | **13 PASSED** | Directory CRUD, nested structures, file CRUD, copy/move, search, grep, duplicate finder, organize files, summarize document, python runner, **safe trash & undo recovery**, **content generator synthesis** |
+| `tests/test_nlp.py` | 5 | **5 PASSED** | Intent synonym variations, intent classification types, entity extraction, compound splitting, context anaphora resolution |
+| `tests/test_planner.py` | 3 | **3 PASSED** | Dependency ordering, filesystem verification, partial failure skipping |
+| `tests/test_security.py` | 5 | **5 PASSED** | Workspace confinement, path traversal blocking (`../../`), absolute path escape blocking, filename sanitization, dangerous command rejection |
+| `tests/test_voice.py` | 5 | **5 PASSED** | Microphone enumeration, recognizer initialization, speaker sanitization, **offline Vosk model loaded**, **hold-to-talk lifecycle** |
+| `tests/test_ui.py` | 2 | **2 PASSED** | Dashboard widget initialization without `TclError`, `ttk.PanedWindow` proportional weights |
+| `tests/test_startup.py` | 3 | **3 PASSED** | Configuration loading, batch launcher validation (`START.bat`, `INSTALL.bat`), CLI session runner |
+
+---
+
+## 🎯 12-Turn Acceptance Scenario Verification Output
+
+All 12 turns executed and verified against disk state:
+1. `Create a folder called College.` ➜ ✅ Created `College`
+2. `Inside it create a folder called Semester Seven.` ➜ ✅ Created `College/Semester Seven`
+3. `Inside Semester Seven create AI, SNA and Projects.` ➜ ✅ Created `AI`, `SNA`, `Projects` inside `Semester Seven`
+4. `Create a text file in SNA explaining social network analysis.` ➜ ✅ Created `College/Semester Seven/SNA/notes.txt` with educational SNA content
+5. `Create a Python calculator inside Projects.` ➜ ✅ Created `College/Semester Seven/Projects/calculator.py`
+6. `Write working code into it and verify that the calculator works.` ➜ ✅ Wrote working code & verified self-tests passed
+7. `Rename Projects to Development.` ➜ ✅ Renamed `Projects` to `Development`
+8. `Move the calculator into AI.` ➜ ✅ Moved `calculator.py` to `College/Semester Seven/AI/`
+9. `Move it back to Development.` ➜ ✅ Moved `calculator.py` back to `College/Semester Seven/Development/`
+10. `Show me everything inside Semester Seven.` ➜ ✅ Listed `AI`, `Development`, `SNA`
+11. `Delete the SNA notes file.` ➜ ✅ Safely moved `notes.txt` to `.trash/` with metadata
+12. `Undo that.` ➜ ✅ Restored `notes.txt` back to `College/Semester Seven/SNA/notes.txt`

@@ -60,7 +60,7 @@ class IntentClassifier:
             (IntentType.UNDO, [
                 re.compile(r"\b(undo|undo\s+that|revert|revert\s+that|rollback|roll\s+back|take\s+that\s+back)\b", re.I),
                 re.compile(r"\bundo\s+(the\s+)?(last\s+)?(operation|action|step|change)\b", re.I),
-                re.compile(r"\b(actually,?\s+)?(move|put)\s+it\s+back\b", re.I)
+                re.compile(r"\b(actually,?\s+)?(move|put)\s+it\s+back(?:\s*$|\s+to\s+where\s+it\s+was\b)", re.I)
             ]),
 
             # 2. Correction / Override
@@ -92,6 +92,8 @@ class IntentClassifier:
             # 6. Execute Python Script
             (IntentType.EXECUTE_SCRIPT, [
                 re.compile(r"\b(run|execute|launch|start)\s+(the\s+)?(python\s+script|script|code|program|test)\b", re.I),
+                re.compile(r"\bverify\s+(?:that\s+)?(?:the\s+)?[\w\s]+\s+works\b", re.I),
+                re.compile(r"\b(test|verify)\s+(the\s+)?(code|script|calculator|program)\b", re.I),
                 re.compile(r"\b(run|execute)\s+[\w\-./\\]+\.py\b", re.I)
             ]),
 
@@ -129,6 +131,8 @@ class IntentClassifier:
             # 12. Write to File
             (IntentType.WRITE_FILE, [
                 re.compile(r"\b(write|put|insert)\s+.+\s+(in|into|to)\s+(the\s+)?file\b", re.I),
+                re.compile(r"\bwrite\s+(?:working\s+)?code\s+(?:in|into)\s+(?:it|the\s+file|the\s+script)\b", re.I),
+                re.compile(r"\bwrite\s+(?:code|content|text)\s+into\b", re.I),
                 re.compile(r"\boverwrite\b", re.I)
             ]),
 
@@ -194,6 +198,7 @@ class IntentClassifier:
             # 22. Create File
             (IntentType.CREATE_FILE, [
                 re.compile(r"\b(create|make|generate|build|touch|new|set\s+up|write|add)\s+(a\s+|an\s+)?([a-z0-9_-]+\s+)?file\b", re.I),
+                re.compile(r"\b(create|make|build|write)\s+(?:a\s+|an\s+)?(?:python\s+)?calculator\b", re.I),
                 re.compile(r"\b(in|inside)\s+(the\s+)?[\w\s]+\s+(create|make)\s+(a\s+|an\s+)?(text\s+|python\s+)?file\b", re.I),
                 re.compile(r"\b(create|make)\s+(a\s+)?readme\b", re.I),
                 re.compile(r"\b(create|make|generate)\s+[\w\-./\\]+\.(py|txt|md|json|csv|log|html|css|js)\b", re.I)
@@ -202,6 +207,8 @@ class IntentClassifier:
             # 23. Create Folder
             (IntentType.CREATE_FOLDER, [
                 re.compile(r"\b(create|make|generate|set\s+up|build|mkdir|add|initialize)\s+(a\s+|an\s+|the\s+)?(new\s+)?(folder|directory|dir)\b", re.I),
+                re.compile(r"\b(?:inside|in)\s+[\w\s]+,\s*(?:please\s+)?create\s+(?!a\s+file\b|file\b|a\s+text\b)", re.I),
+                re.compile(r"\b(?:inside|in)\s+[\w\s]+\s+create\s+(?!a\s+file\b|file\b|a\s+text\b)", re.I),
                 re.compile(r"\bmkdir\s+[A-Za-z0-9_\-]+", re.I),
                 re.compile(r"\b(create|make)\s+\w+\s+(folders?|directories)\b", re.I),
                 re.compile(r"\bi\s+need\s+(a\s+)?(folder|directory)\b", re.I),

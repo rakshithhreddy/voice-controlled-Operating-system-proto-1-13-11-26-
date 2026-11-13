@@ -26,6 +26,7 @@ from src.planner.executor import TaskExecutor, ExecutionResult
 from src.planner.task import TaskItem, TaskStatus
 from src.voice.recognizer import SpeechRecognitionEngine
 from src.voice.speaker import VoiceSpeaker
+from src.voice.hold_to_talk import HoldToTalkManager
 from src.ui import theme
 
 logger = logging.getLogger("VoiceOS.UI")
@@ -64,6 +65,14 @@ class VoiceAssistantApp:
             on_status_change=self._on_voice_status_change
         )
 
+        # Push-to-Talk (Hold Enter) Manager
+        self.hold_to_talk = HoldToTalkManager(
+            on_recording_start=lambda: self.msg_queue.put(("STATUS", "RECORDING...")),
+            on_recording_tick=lambda elapsed: self.msg_queue.put(("STATUS", f"RECORDING ({elapsed:.1f}s)...")),
+            on_recording_complete=self._on_hold_to_talk_complete,
+            on_error=lambda err: self.msg_queue.put(("STATUS", "MIC_ERROR"))
+        )
+
         # UI state variables
         self.status_var = tk.StringVar(value="IDLE")
         self.mic_state_var = tk.StringVar(value="Continuous Mic: OFF")
@@ -77,8 +86,15 @@ class VoiceAssistantApp:
         self._build_main_dashboard()
         self._build_footer()
 
+        # Root keyboard shortcuts for Push-To-Talk
+        self.root.bind("<KeyPress-Return>", self._on_enter_key_press)
+        self.root.bind("<KeyRelease-Return>", self._on_enter_key_release)
+
         # Periodic queue checker
         self.root.after(100, self._process_queue)
+
+        # Initial workspace tree population
+        self.root.after(300, self._refresh_workspace_tree)
 
         # Set initial status
         self._update_status_badge("IDLE")
@@ -164,8 +180,8 @@ class VoiceAssistantApp:
         ctrl_frame = ttk.Frame(self.root, style="Surface.TFrame", padding="10 8 10 8")
         ctrl_frame.pack(fill=tk.X, padx=12, pady=5)
 
-        # Push to talk button
-        self.btn_listen = ttk.Button(ctrl_frame, text="🎤 Speak Command", style="Accent.TButton", command=self._on_push_to_talk)
+        # Push to talk button (supports clicking or holding Enter)
+        self.btn_listen = ttk.Button(ctrl_frame, text="🎤 Speak [Hold Enter]", style="Accent.TButton", command=self._on_push_to_talk)
         self.btn_listen.pack(side=tk.LEFT, padx=4)
 
         # Toggle continuous listening button
@@ -288,6 +304,23 @@ class VoiceAssistantApp:
         )
         self.txt_logs.pack(fill=tk.BOTH, expand=True)
 
+        # Tab 3: Live Workspace Data Explorer
+        tab_ws = ttk.Frame(notebook, padding=6)
+        notebook.add(tab_ws, text="Workspace Data Explorer")
+
+        self.tree_workspace = ttk.Treeview(tab_ws, columns=("type", "size"), show="tree headings")
+        self.tree_workspace.heading("#0", text="Folder / File Path")
+        self.tree_workspace.heading("type", text="Type")
+        self.tree_workspace.heading("size", text="Size")
+        self.tree_workspace.column("#0", width=420)
+        self.tree_workspace.column("type", width=90, anchor=tk.CENTER)
+        self.tree_workspace.column("size", width=90, anchor=tk.CENTER)
+
+        ws_scroll = ttk.Scrollbar(tab_ws, orient=tk.VERTICAL, command=self.tree_workspace.yview)
+        self.tree_workspace.configure(yscrollcommand=ws_scroll.set)
+        self.tree_workspace.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ws_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
     def _build_footer(self):
         footer_frame = ttk.Frame(self.root, padding="10 4 10 8")
         footer_frame.pack(fill=tk.X)
@@ -309,6 +342,58 @@ class VoiceAssistantApp:
     # -----------------------------------------------------------------
     # CONTROL HANDLERS
     # -----------------------------------------------------------------
+
+    def _on_enter_key_press(self, event):
+        # If user is in text input, let Return submit the typed command
+        if self.root.focus_get() == self.txt_input:
+            return
+        started = self.hold_to_talk.handle_key_press()
+        if started:
+            self._update_status_badge("RECORDING...")
+
+    def _on_enter_key_release(self, event):
+        if self.root.focus_get() == self.txt_input:
+            return
+        if self.hold_to_talk.is_recording():
+            self._update_status_badge("PROCESSING...")
+            self.hold_to_talk.handle_key_release()
+
+    def _on_hold_to_talk_complete(self, wav_bytes: bytes):
+        def worker():
+            self.msg_queue.put(("STATUS", "TRANSCRIBING..."))
+            text = self.recognizer.transcribe_wav_bytes(wav_bytes)
+            if text:
+                self.msg_queue.put(("TRANSCRIBED", text))
+            else:
+                self.msg_queue.put(("STATUS", "NO_SPEECH"))
+                time.sleep(1.0)
+                self.msg_queue.put(("STATUS", "IDLE"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_workspace_tree(self):
+        """Refreshes the live workspace explorer treeview."""
+        if not hasattr(self, "tree_workspace"):
+            return
+        for item in self.tree_workspace.get_children():
+            self.tree_workspace.delete(item)
+
+        tree_data = self.workspace.get_workspace_tree()
+
+        def insert_node(parent_id, node_data):
+            node_type = node_data.get("type", "folder")
+            size_str = f"{node_data.get('size', 0)} B" if node_type == "file" else ""
+            icon = "📁 " if node_type == "folder" else "📄 "
+            item_id = self.tree_workspace.insert(
+                parent_id,
+                tk.END,
+                text=f"{icon}{node_data.get('name')}",
+                values=(node_type, size_str),
+                open=True
+            )
+            for child in node_data.get("children", []):
+                insert_node(item_id, child)
+
+        insert_node("", tree_data)
 
     def _on_push_to_talk(self):
         """Runs single phrase recognition in background thread."""
@@ -407,6 +492,9 @@ class VoiceAssistantApp:
                 # Record in History
                 self._record_history(user_command, result)
                 self._log_system(f"Completed command turn. Success: {result.overall_success}")
+
+                # Refresh live workspace explorer
+                self.root.after(0, self._refresh_workspace_tree)
 
             except Exception as e:
                 logger.error(f"Error in pipeline worker: {e}", exc_info=True)

@@ -685,6 +685,10 @@ class WorkspaceManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def organize_files(self, target_folder: str = ".", criteria: str = "type") -> Dict[str, Any]:
+        """Backward-compatible alias for organize_directory."""
+        return self.organize_directory(target_folder=target_folder, criteria=criteria)
+
     # -------------------------------------------------------------
     # UNDO RECOVERY ACTION
     # -------------------------------------------------------------
@@ -707,18 +711,22 @@ class WorkspaceManager:
             if target.suffix != ".py":
                 return {"success": False, "error": f"'{script_path}' is not a Python (.py) file."}
 
-            cmd = ["python", str(target)]
+            import sys
+            cmd = [sys.executable, str(target)]
             if args:
                 cmd.extend(args)
+            else:
+                cmd.append("--test")
 
             self.security.validate_command_safety(cmd)
 
             proc = subprocess.run(
                 cmd,
                 cwd=str(target.parent),
+                input="",
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=10
             )
 
             return {

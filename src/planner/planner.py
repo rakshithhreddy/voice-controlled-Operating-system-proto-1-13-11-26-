@@ -80,7 +80,7 @@ class TaskPlanner:
                 parent_dir = current_workspace_cwd
 
             # Determine final target path
-            if intent in [IntentType.MOVE_ITEM, IntentType.COPY_ITEM]:
+            if intent in [IntentType.MOVE_ITEM, IntentType.COPY_ITEM, IntentType.RENAME_FILE, IntentType.RENAME_FOLDER]:
                 full_target = target
             elif parent_dir and parent_dir != "." and target:
                 full_target = f"{parent_dir}/{target}"

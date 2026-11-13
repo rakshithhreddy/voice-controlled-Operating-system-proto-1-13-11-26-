@@ -29,3 +29,15 @@ def test_speaker_initialization_and_sanitization():
     long_multiline = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6"
     cleaned = speaker._clean_speech_text(long_multiline)
     assert "Plus 5 more lines" in cleaned
+
+
+def test_vosk_offline_model_loaded():
+    engine = SpeechRecognitionEngine()
+    assert engine.vosk_model is not None, "Offline Vosk model should be loaded"
+
+
+def test_hold_to_talk_manager_lifecycle():
+    from src.voice.hold_to_talk import HoldToTalkManager
+    htt = HoldToTalkManager()
+    assert htt.is_recording() is False
+    assert htt._key_held is False

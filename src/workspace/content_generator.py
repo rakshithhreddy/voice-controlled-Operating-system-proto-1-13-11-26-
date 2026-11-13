@@ -97,7 +97,21 @@ def square_root(a: float) -> float:
         raise ValueError("Cannot calculate square root of a negative number.")
     return math.sqrt(a)
 
+def run_tests():
+    assert add(10, 5) == 15
+    assert subtract(10, 5) == 5
+    assert multiply(10, 5) == 50
+    assert divide(10, 5) == 2.0
+    assert power(2, 3) == 8
+    assert square_root(16) == 4.0
+    print("All calculator tests passed successfully!")
+
 def main():
+    import sys
+    if not sys.stdin.isatty() or len(sys.argv) > 1 and sys.argv[1] == "--test":
+        run_tests()
+        return
+
     print("=" * 40)
     print("        CAOP Python Calculator")
     print("=" * 40)

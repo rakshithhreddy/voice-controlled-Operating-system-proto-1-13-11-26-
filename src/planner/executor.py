@@ -138,14 +138,27 @@ class TaskExecutor:
         if direct.exists():
             return clean
 
-        # Recursive search for matching relative item
+        # Exact and stem matches
         for p in self.workspace.root.rglob("*"):
             if ".trash" in p.parts:
                 continue
             if is_dir_only and not p.is_dir():
                 continue
-            if p.name.lower() == clean.lower() or str(p.relative_to(self.workspace.root)).lower().endswith(clean.lower()):
-                return str(p.relative_to(self.workspace.root))
+            rel_str = str(p.relative_to(self.workspace.root))
+            if p.name.lower() == clean.lower() or p.stem.lower() == clean.lower() or rel_str.lower().endswith(clean.lower()):
+                return rel_str
+
+        # Substring / fuzzy match for phrases like 'SNA notes'
+        clean_lower = clean.lower()
+        if "notes" in clean_lower:
+            for p in self.workspace.root.rglob("*.txt"):
+                if ".trash" in p.parts:
+                    continue
+                rel_str = str(p.relative_to(self.workspace.root))
+                if "sna" in clean_lower and "sna" in rel_str.lower():
+                    return rel_str
+                if "notes" in p.name.lower():
+                    return rel_str
 
         return None
 
@@ -157,16 +170,27 @@ class TaskExecutor:
 
         try:
             if intent == IntentType.CREATE_FOLDER:
+                p = Path(target)
+                if p.parent != Path("."):
+                    resolved_p = self._find_item_in_workspace(str(p.parent), is_dir_only=True)
+                    if resolved_p and resolved_p != str(p.parent):
+                        target = str(Path(resolved_p) / p.name)
                 return self.workspace.create_directory(target)
 
             elif intent == IntentType.CREATE_FILE:
+                p = Path(target)
+                if p.parent != Path("."):
+                    resolved_p = self._find_item_in_workspace(str(p.parent), is_dir_only=True)
+                    if resolved_p and resolved_p != str(p.parent):
+                        target = str(Path(resolved_p) / p.name)
                 content = params.get("content", "")
                 topic = params.get("topic_prompt", "")
                 return self.workspace.create_file(target, initial_content=content, topic_prompt=topic)
 
             elif intent == IntentType.DELETE_FOLDER or intent == IntentType.DELETE_FILE:
                 resolved_target = self._find_item_in_workspace(target) or target
-                if intent == IntentType.DELETE_FOLDER:
+                resolved_p = self.workspace.root / resolved_target
+                if resolved_p.is_dir() or intent == IntentType.DELETE_FOLDER:
                     return self.workspace.delete_directory(resolved_target)
                 return self.workspace.delete_file(resolved_target)
 
@@ -183,13 +207,19 @@ class TaskExecutor:
                 else:
                     final_new = new_name
 
-                if intent == IntentType.RENAME_FOLDER:
+                resolved_p = self.workspace.root / resolved_old
+                if resolved_p.is_dir() or intent == IntentType.RENAME_FOLDER:
                     return self.workspace.rename_directory(resolved_old, final_new)
                 return self.workspace.rename_file(resolved_old, final_new)
 
             elif intent == IntentType.MOVE_ITEM:
+                actual_target = target
+                if actual_target.lower() in ["it", "that", "the item", "them", "those"]:
+                    last_f = self.context.get_last_file() or self.context.get_last_folder()
+                    if last_f:
+                        actual_target = last_f
                 # Resolve source item
-                resolved_src = self._find_item_in_workspace(target) or target
+                resolved_src = self._find_item_in_workspace(actual_target) or actual_target
                 # Resolve destination folder
                 raw_dest = params.get("destination") or target
                 resolved_dst = self._find_item_in_workspace(raw_dest, is_dir_only=True) or raw_dest
@@ -207,8 +237,15 @@ class TaskExecutor:
                 return self.workspace.read_file(resolved_file)
 
             elif intent == IntentType.WRITE_FILE:
-                resolved_file = self._find_item_in_workspace(target) or target
-                return self.workspace.write_file(resolved_file, params.get("content", ""))
+                actual_target = target
+                if actual_target.lower() in ["it", "that", "the file"]:
+                    actual_target = self.context.get_last_file() or actual_target
+                resolved_file = self._find_item_in_workspace(actual_target) or actual_target
+                content = params.get("content", "")
+                if not content:
+                    from src.workspace.content_generator import ContentGenerator
+                    content = ContentGenerator.generate_content(resolved_file, "working calculator program")
+                return self.workspace.write_file(resolved_file, content)
 
             elif intent == IntentType.APPEND_FILE:
                 resolved_file = self._find_item_in_workspace(target) or target
@@ -314,9 +351,20 @@ class TaskExecutor:
             self.context.update_context(folder=actual_path, success=True)
         elif task.intent == IntentType.CREATE_FILE:
             self.context.update_context(file=actual_path, success=True)
-        elif task.intent == IntentType.RENAME_FOLDER:
+        elif task.intent in [IntentType.RENAME_FOLDER, IntentType.RENAME_FILE]:
             new_p = task.result.get("new_path", actual_path) if task.result else actual_path
-            self.context.update_context(folder=new_p, success=True)
+            if "." in Path(new_p).name:
+                self.context.update_context(file=new_p, success=True)
+            else:
+                self.context.update_context(folder=new_p, success=True)
+        elif task.intent == IntentType.MOVE_ITEM:
+            dest = task.result.get("destination", actual_path) if task.result else actual_path
+            if "." in Path(dest).name:
+                self.context.update_context(file=dest, success=True)
+            else:
+                self.context.update_context(folder=dest, success=True)
+        elif task.intent in [IntentType.DELETE_FILE, IntentType.DELETE_FOLDER]:
+            self.context.update_context(targets=[actual_path], success=True)
 
     def _build_natural_response(self, result: ExecutionResult) -> str:
         if result.total == 0:

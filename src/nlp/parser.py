@@ -97,7 +97,7 @@ class InstructionParser:
                 s_clean = re.sub(r"^(inside|in|into|under\s+(?:it|that|the\s+[\w\s]+)),\s+", r"\1 ", s_clean, flags=re.I)
 
             # Split on markers: ', then ', '; ', 'after that, ', 'and create...'
-            pattern = r"(?:,\s*(?:and\s+)?then\s+|(?:and\s+)?then\s+|;\s*|,\s*after\s+that,?\s*|after\s+that,?\s*|,\s*and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move))|\s+and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move)))"
+            pattern = r"(?:,\s*(?:and\s+)?then\s+|(?:and\s+)?then\s+|;\s*|,\s*after\s+that,?\s*|after\s+that,?\s*|,\s*and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move|verify|run|test|check))|\s+and\s+(?=(?:create|make|generate|build|delete|remove|open|read|write|organize|move|verify|run|test|check)))"
 
             raw_parts = re.split(pattern, s_clean, flags=re.I)
             for p in raw_parts:
@@ -163,6 +163,7 @@ class InstructionParser:
         step_id = 1
         current_focus_folder = self.context.get_last_folder()
         last_step_folder: Optional[str] = None
+        last_step_was_nested: bool = False
         turn_created_folders: List[str] = []
 
         for clause in clauses:
@@ -178,14 +179,27 @@ class InstructionParser:
             rename_src = entities["rename_source"]
             rename_dst = entities["rename_dest"]
 
+            # If intent is WRITE_FILE or APPEND_FILE and destination is 'it' (or no name given),
+            # the pronoun 'it' refers to the active target file being written to!
+            if intent in [IntentType.WRITE_FILE, IntentType.APPEND_FILE]:
+                if not names and (destination == "it" or entities["destination"] == "it" or destination is None):
+                    names = [self.context.get_last_file() or "it"]
+                    destination = None
+
             # Handle destination resolution ('inside it', 'in it', 'there')
-            if destination == "it":
+            elif destination == "it":
                 if last_step_folder:
                     destination = last_step_folder
                 elif current_focus_folder:
                     destination = current_focus_folder
                 else:
                     destination = self.context.get_last_folder()
+
+            # Inherit destination if continuing a compound nested creation sequence
+            # (e.g. "Create folder A, create folder B inside it, and create file C")
+            if destination is None and intent in [IntentType.CREATE_FILE]:
+                if last_step_folder and last_step_was_nested:
+                    destination = last_step_folder
 
             # Handle 'the last one'
             if names and names[0] == "the last one":
@@ -195,10 +209,19 @@ class InstructionParser:
                 elif turn_created_folders:
                     names = [turn_created_folders[-1]]
 
+            # Handle pronoun targets ('it', 'that', 'them', 'those')
+            if not names:
+                if re.search(r"\b(it|that|them|those)\b", clause, re.I):
+                    ref = self.context.get_last_file() or self.context.get_last_folder()
+                    if ref:
+                        names = [ref]
+
             # Handle rename pair extraction
             new_name = rename_dst
             if rename_src:
                 names = [rename_src]
+            if intent in [IntentType.RENAME_FOLDER, IntentType.RENAME_FILE]:
+                destination = None
 
             # Handle organize target extraction: "organize the College folder properly" -> target="College"
             if intent == IntentType.ORGANIZE_FILES:
@@ -231,6 +254,9 @@ class InstructionParser:
                     if intent == IntentType.CREATE_FOLDER:
                         last_step_folder = clean_name
                         turn_created_folders.append(clean_name)
+                        last_step_was_nested = (destination is not None)
+                    else:
+                        last_step_was_nested = False
                     step_id += 1
                 continue
 
@@ -259,10 +285,13 @@ class InstructionParser:
             instructions.append(inst)
 
             if intent == IntentType.CREATE_FOLDER and target_name:
+                last_step_was_nested = (destination is not None)
                 last_step_folder = target_name
                 turn_created_folders.append(target_name)
                 if not current_focus_folder:
                     current_focus_folder = target_name
+            else:
+                last_step_was_nested = False
 
             step_id += 1
 
